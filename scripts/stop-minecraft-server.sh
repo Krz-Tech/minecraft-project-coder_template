@@ -112,17 +112,16 @@ stop_tunnel() {
         tunnel_pid=$(cat "$TUNNEL_PID_FILE")
         
         if kill -0 "$tunnel_pid" 2>/dev/null; then
-            log_tunnel "Cloudflare Tunnel を停止中 (PID: $tunnel_pid)..."
+            log_tunnel "playit.gg Tunnel を停止中 (PID: $tunnel_pid)..."
             kill -15 "$tunnel_pid" 2>/dev/null || true
             sleep 2
             kill -9 "$tunnel_pid" 2>/dev/null || true
-            log_tunnel "Cloudflare Tunnel 停止完了"
+            log_tunnel "playit.gg Tunnel 停止完了"
         else
             log_tunnel "Tunnel プロセスは既に停止しています"
         fi
         
         rm -f "$TUNNEL_PID_FILE"
-        rm -f "${SERVER_DIR}/tunnel_url.txt" 2>/dev/null || true
     fi
 }
 

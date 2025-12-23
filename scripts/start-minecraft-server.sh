@@ -10,7 +10,7 @@
 #   ./scripts/start-minecraft-server.sh                    # バックグラウンド起動
 #   ./scripts/start-minecraft-server.sh --foreground       # フォアグラウンド起動
 #   ./scripts/start-minecraft-server.sh --memory 4G        # メモリ指定
-#   ./scripts/start-minecraft-server.sh --tunnel           # Cloudflare Tunnel で公開
+#   ./scripts/start-minecraft-server.sh --tunnel           # playit.gg で外部公開
 # =============================================================================
 
 set -euo pipefail
@@ -120,7 +120,7 @@ parse_args() {
                 echo "  --min-memory <SIZE>   最小メモリ"
                 echo "  --max-memory <SIZE>   最大メモリ"
                 echo "  --foreground, -f      フォアグラウンドで起動"
-                echo "  --tunnel, -t          Cloudflare Tunnel で外部公開"
+                echo "  --tunnel, -t          playit.gg で外部公開 (TCP 対応)"
                 echo "  --port <PORT>         サーバーポート (デフォルト: 25566)"
                 echo "  --help                ヘルプを表示"
                 exit 0
@@ -160,10 +160,10 @@ check_prerequisites() {
         fi
     fi
     
-    # Tunnel 使用時の cloudflared チェック
+    # Tunnel 使用時の playit チェック
     if [[ "$ENABLE_TUNNEL" == true ]]; then
-        if ! command -v cloudflared &> /dev/null; then
-            log_error "cloudflared がインストールされていません。Dockerfile に含まれていることを確認してください。"
+        if ! command -v playit &> /dev/null; then
+            log_error "playit がインストールされていません。Dockerfile に含まれていることを確認してください。"
         fi
     fi
     
@@ -171,57 +171,45 @@ check_prerequisites() {
 }
 
 # -----------------------------------------------------------------------------
-# Cloudflare Tunnel 起動 / Start Cloudflare Tunnel
+# playit.gg Tunnel 起動 / Start playit.gg Tunnel
 # -----------------------------------------------------------------------------
 start_tunnel() {
-    log_tunnel "Cloudflare Tunnel を起動中..."
-    log_tunnel "ポート ${SERVER_PORT} を外部公開します"
+    log_tunnel "playit.gg Tunnel を起動中..."
+    log_tunnel "ポート ${SERVER_PORT} を外部公開します (TCP)"
     
-    # 一時トンネル (Quick Tunnel) を使用
-    # TCP トンネルのログからURLを取得
     local tunnel_log="${SERVER_DIR}/logs/tunnel.log"
     
-    nohup cloudflared tunnel --url "tcp://localhost:${SERVER_PORT}" > "$tunnel_log" 2>&1 &
+    echo ""
+    echo -e "${CYAN}=========================================="
+    echo "  playit.gg TCP Tunnel"
+    echo "=========================================="
+    echo ""
+    echo "  playit.gg を初めて使用する場合:"
+    echo "  1. 以下のコマンドを別ターミナルで実行:"
+    echo ""
+    echo "     playit"
+    echo ""
+    echo "  2. 表示されるリンクをブラウザで開き"
+    echo "     playit.gg アカウントにログイン"
+    echo ""
+    echo "  3. ダッシュボードでトンネルを設定:"
+    echo "     - Add Tunnel → Minecraft Java"
+    echo "     - Local port: ${SERVER_PORT}"
+    echo ""
+    echo "  4. 発行されたアドレスで接続可能になります"
+    echo "     例: xxx.at.playit.gg"
+    echo ""
+    echo -e "==========================================${NC}"
+    echo ""
+    
+    # バックグラウンドで playit を起動
+    nohup playit > "$tunnel_log" 2>&1 &
     local tunnel_pid=$!
     echo "$tunnel_pid" > "$TUNNEL_PID_FILE"
     
-    # トンネルURLが出力されるまで待機
-    log_tunnel "トンネル URL を取得中..."
-    sleep 5
-    
-    # ログからトンネルURLを抽出
-    local tunnel_url=""
-    for i in {1..10}; do
-        tunnel_url=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$tunnel_log" 2>/dev/null | head -1 || true)
-        if [[ -n "$tunnel_url" ]]; then
-            break
-        fi
-        sleep 1
-    done
-    
-    if [[ -n "$tunnel_url" ]]; then
-        log_success "Cloudflare Tunnel 起動成功!"
-        echo ""
-        echo -e "${CYAN}=========================================="
-        echo "  Minecraft クライアントから以下で接続:"
-        echo "=========================================="
-        echo ""
-        echo "  1. Minecraft を起動"
-        echo "  2. マルチプレイ → サーバーを追加"
-        echo "  3. 以下のアドレスを入力:"
-        echo ""
-        echo -e "     ${GREEN}${tunnel_url}${NC}"
-        echo ""
-        echo "  ※ ポート番号は不要です"
-        echo -e "==========================================${NC}"
-        echo ""
-        
-        # URL をファイルに保存
-        echo "$tunnel_url" > "${SERVER_DIR}/tunnel_url.txt"
-    else
-        log_warn "トンネル URL の取得に失敗しました"
-        log_warn "ログを確認してください: ${tunnel_log}"
-    fi
+    log_tunnel "playit プロセスを起動しました (PID: $tunnel_pid)"
+    log_tunnel "ログ: tail -f ${tunnel_log}"
+    echo ""
 }
 
 # -----------------------------------------------------------------------------
