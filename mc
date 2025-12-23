@@ -17,8 +17,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SERVER_DIR="${PROJECT_ROOT}/minecraft-server"
+SERVER_DIR="${SCRIPT_DIR}/minecraft-server"
 JAR_FILE="${SERVER_DIR}/paper.jar"
 
 # Screen セッション名
