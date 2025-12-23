@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SERVER_DIR="${PROJECT_ROOT}/minecraft-server"
 PID_FILE="${SERVER_DIR}/server.pid"
+TUNNEL_PID_FILE="${SERVER_DIR}/tunnel.pid"
 PROPERTIES_FILE="${SERVER_DIR}/server.properties"
 
 # デフォルト設定 / Default Settings
@@ -35,6 +36,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 log_info() {
@@ -52,6 +54,10 @@ log_warn() {
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
     exit 1
+}
+
+log_tunnel() {
+    echo -e "${CYAN}[TUNNEL]${NC} $1"
 }
 
 # -----------------------------------------------------------------------------
@@ -98,6 +104,29 @@ load_rcon_settings() {
 }
 
 # -----------------------------------------------------------------------------
+# Cloudflare Tunnel 停止 / Stop Cloudflare Tunnel
+# -----------------------------------------------------------------------------
+stop_tunnel() {
+    if [[ -f "$TUNNEL_PID_FILE" ]]; then
+        local tunnel_pid
+        tunnel_pid=$(cat "$TUNNEL_PID_FILE")
+        
+        if kill -0 "$tunnel_pid" 2>/dev/null; then
+            log_tunnel "Cloudflare Tunnel を停止中 (PID: $tunnel_pid)..."
+            kill -15 "$tunnel_pid" 2>/dev/null || true
+            sleep 2
+            kill -9 "$tunnel_pid" 2>/dev/null || true
+            log_tunnel "Cloudflare Tunnel 停止完了"
+        else
+            log_tunnel "Tunnel プロセスは既に停止しています"
+        fi
+        
+        rm -f "$TUNNEL_PID_FILE"
+        rm -f "${SERVER_DIR}/tunnel_url.txt" 2>/dev/null || true
+    fi
+}
+
+# -----------------------------------------------------------------------------
 # RCON で停止 / Stop via RCON
 # -----------------------------------------------------------------------------
 stop_via_rcon() {
@@ -115,7 +144,8 @@ stop_via_rcon() {
 # -----------------------------------------------------------------------------
 stop_via_pid() {
     if [[ ! -f "$PID_FILE" ]]; then
-        log_error "PID ファイルが見つかりません。サーバーが起動していないか、手動で起動されました。"
+        log_warn "PID ファイルが見つかりません。サーバーが起動していないか、手動で起動されました。"
+        return 1
     fi
     
     local pid
@@ -124,7 +154,7 @@ stop_via_pid() {
     if ! kill -0 "$pid" 2>/dev/null; then
         log_warn "プロセス (PID: $pid) は既に停止しています"
         rm -f "$PID_FILE"
-        exit 0
+        return 0
     fi
     
     if [[ "$FORCE" == true ]]; then
@@ -164,6 +194,9 @@ main() {
     echo ""
     
     load_rcon_settings
+    
+    # Tunnel が起動していれば停止
+    stop_tunnel
     
     # まず RCON を試行、失敗したら PID で停止
     if ! stop_via_rcon; then

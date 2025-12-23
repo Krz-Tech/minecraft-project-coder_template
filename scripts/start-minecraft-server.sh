@@ -4,12 +4,13 @@
 # Minecraft Paper サーバー起動スクリプト
 # 
 # 使用方法 / Usage:
-#   ./scripts/start-minecraft-server.sh [--memory <SIZE>] [--foreground]
+#   ./scripts/start-minecraft-server.sh [--memory <SIZE>] [--foreground] [--tunnel]
 #
 # 例 / Examples:
 #   ./scripts/start-minecraft-server.sh                    # バックグラウンド起動
 #   ./scripts/start-minecraft-server.sh --foreground       # フォアグラウンド起動
 #   ./scripts/start-minecraft-server.sh --memory 4G        # メモリ指定
+#   ./scripts/start-minecraft-server.sh --tunnel           # Cloudflare Tunnel で公開
 # =============================================================================
 
 set -euo pipefail
@@ -21,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SERVER_DIR="${PROJECT_ROOT}/minecraft-server"
 PID_FILE="${SERVER_DIR}/server.pid"
+TUNNEL_PID_FILE="${SERVER_DIR}/tunnel.pid"
 JAR_FILE="${SERVER_DIR}/paper.jar"
 CONF_FILE="${SERVER_DIR}/start.conf"
 
@@ -28,7 +30,11 @@ CONF_FILE="${SERVER_DIR}/start.conf"
 MEMORY_MIN="1G"
 MEMORY_MAX="2G"
 FOREGROUND=false
+ENABLE_TUNNEL=false
 EXTRA_FLAGS=""
+
+# サーバーポート (server.properties と一致させる)
+SERVER_PORT=25566
 
 # Aikar's Flags (デフォルト)
 AIKARS_FLAGS="-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4 -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90 -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32 -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1"
@@ -40,6 +46,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 log_info() {
@@ -57,6 +64,10 @@ log_warn() {
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
     exit 1
+}
+
+log_tunnel() {
+    echo -e "${CYAN}[TUNNEL]${NC} $1"
 }
 
 # -----------------------------------------------------------------------------
@@ -93,6 +104,14 @@ parse_args() {
                 FOREGROUND=true
                 shift
                 ;;
+            --tunnel|-t)
+                ENABLE_TUNNEL=true
+                shift
+                ;;
+            --port)
+                SERVER_PORT="$2"
+                shift 2
+                ;;
             --help)
                 echo "使用方法: $0 [オプション]"
                 echo ""
@@ -101,6 +120,8 @@ parse_args() {
                 echo "  --min-memory <SIZE>   最小メモリ"
                 echo "  --max-memory <SIZE>   最大メモリ"
                 echo "  --foreground, -f      フォアグラウンドで起動"
+                echo "  --tunnel, -t          Cloudflare Tunnel で外部公開"
+                echo "  --port <PORT>         サーバーポート (デフォルト: 25566)"
                 echo "  --help                ヘルプを表示"
                 exit 0
                 ;;
@@ -139,7 +160,68 @@ check_prerequisites() {
         fi
     fi
     
+    # Tunnel 使用時の cloudflared チェック
+    if [[ "$ENABLE_TUNNEL" == true ]]; then
+        if ! command -v cloudflared &> /dev/null; then
+            log_error "cloudflared がインストールされていません。Dockerfile に含まれていることを確認してください。"
+        fi
+    fi
+    
     log_success "前提条件チェック完了"
+}
+
+# -----------------------------------------------------------------------------
+# Cloudflare Tunnel 起動 / Start Cloudflare Tunnel
+# -----------------------------------------------------------------------------
+start_tunnel() {
+    log_tunnel "Cloudflare Tunnel を起動中..."
+    log_tunnel "ポート ${SERVER_PORT} を外部公開します"
+    
+    # 一時トンネル (Quick Tunnel) を使用
+    # TCP トンネルのログからURLを取得
+    local tunnel_log="${SERVER_DIR}/logs/tunnel.log"
+    
+    nohup cloudflared tunnel --url "tcp://localhost:${SERVER_PORT}" > "$tunnel_log" 2>&1 &
+    local tunnel_pid=$!
+    echo "$tunnel_pid" > "$TUNNEL_PID_FILE"
+    
+    # トンネルURLが出力されるまで待機
+    log_tunnel "トンネル URL を取得中..."
+    sleep 5
+    
+    # ログからトンネルURLを抽出
+    local tunnel_url=""
+    for i in {1..10}; do
+        tunnel_url=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$tunnel_log" 2>/dev/null | head -1 || true)
+        if [[ -n "$tunnel_url" ]]; then
+            break
+        fi
+        sleep 1
+    done
+    
+    if [[ -n "$tunnel_url" ]]; then
+        log_success "Cloudflare Tunnel 起動成功!"
+        echo ""
+        echo -e "${CYAN}=========================================="
+        echo "  Minecraft クライアントから以下で接続:"
+        echo "=========================================="
+        echo ""
+        echo "  1. Minecraft を起動"
+        echo "  2. マルチプレイ → サーバーを追加"
+        echo "  3. 以下のアドレスを入力:"
+        echo ""
+        echo -e "     ${GREEN}${tunnel_url}${NC}"
+        echo ""
+        echo "  ※ ポート番号は不要です"
+        echo -e "==========================================${NC}"
+        echo ""
+        
+        # URL をファイルに保存
+        echo "$tunnel_url" > "${SERVER_DIR}/tunnel_url.txt"
+    else
+        log_warn "トンネル URL の取得に失敗しました"
+        log_warn "ログを確認してください: ${tunnel_log}"
+    fi
 }
 
 # -----------------------------------------------------------------------------
@@ -148,6 +230,7 @@ check_prerequisites() {
 start_server() {
     log_info "Minecraft サーバーを起動中..."
     log_info "メモリ: ${MEMORY_MIN} - ${MEMORY_MAX}"
+    log_info "ポート: ${SERVER_PORT}"
     
     cd "$SERVER_DIR"
     
@@ -170,6 +253,12 @@ start_server() {
             echo ""
             echo "ログ確認:  tail -f ${SERVER_DIR}/logs/latest.log"
             echo "サーバー停止: ./scripts/stop-minecraft-server.sh"
+            
+            # Tunnel が有効な場合は起動
+            if [[ "$ENABLE_TUNNEL" == true ]]; then
+                echo ""
+                start_tunnel
+            fi
         else
             log_error "サーバーの起動に失敗しました。ログを確認してください。"
         fi
