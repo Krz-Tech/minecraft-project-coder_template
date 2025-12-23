@@ -46,17 +46,6 @@ log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-# Coder CLI パス取得
-get_coder_cli() {
-    # Coder エージェントが配置する CLI を探す
-    local coder_bin
-    coder_bin=$(find /tmp -name "coder" -type f -executable 2>/dev/null | head -1)
-    if [[ -z "$coder_bin" ]]; then
-        coder_bin=$(command -v coder 2>/dev/null || true)
-    fi
-    echo "$coder_bin"
-}
-
 # -----------------------------------------------------------------------------
 # セットアップ
 # -----------------------------------------------------------------------------
@@ -71,15 +60,9 @@ cmd_setup() {
     done
     
     # Coder CLI ログイン
-    local coder_bin
-    coder_bin=$(get_coder_cli)
-    if [[ -n "$coder_bin" ]]; then
-        log_info "Coder CLI ログイン中..."
-        "$coder_bin" login "$CODER_URL" || log_warn "Coder ログインをスキップ (既にログイン済みの可能性)"
-        log_success "Coder CLI 準備完了"
-    else
-        log_warn "Coder CLI が見つかりません。ポートフォワードは手動で実行してください。"
-    fi
+    log_info "Coder CLI ログイン中..."
+    coder login "$CODER_URL" || log_warn "Coder ログインをスキップ (既にログイン済みの可能性)"
+    log_success "Coder CLI 準備完了"
     
     mkdir -p "${SERVER_DIR}"/{plugins/Skript/scripts,logs}
     
@@ -158,22 +141,16 @@ cmd_start() {
     fi
     
     # Coder ポートフォワード起動 (screen)
-    local coder_bin
-    coder_bin=$(get_coder_cli)
-    if [[ -n "$coder_bin" ]]; then
-        log_info "ポートフォワードを起動中..."
-        local workspace_name
-        workspace_name=$(hostname)
-        screen -dmS "$SCREEN_TUNNEL" bash -c "${coder_bin} port-forward ${workspace_name} --tcp ${LOCAL_PORT}:${SERVER_PORT} 2>&1"
-        sleep 2
-        
-        if screen -ls | grep -q "$SCREEN_TUNNEL"; then
-            log_success "ポートフォワード起動成功 (screen: $SCREEN_TUNNEL)"
-        else
-            log_warn "ポートフォワード起動失敗"
-        fi
+    log_info "ポートフォワードを起動中..."
+    local workspace_name
+    workspace_name=$(hostname)
+    screen -dmS "$SCREEN_TUNNEL" bash -c "coder port-forward ${workspace_name} --tcp ${LOCAL_PORT}:${SERVER_PORT} 2>&1"
+    sleep 2
+    
+    if screen -ls | grep -q "$SCREEN_TUNNEL"; then
+        log_success "ポートフォワード起動成功 (screen: $SCREEN_TUNNEL)"
     else
-        log_warn "Coder CLI が見つかりません。手動でポートフォワードしてください。"
+        log_warn "ポートフォワード起動失敗"
     fi
     
     # 接続情報表示
