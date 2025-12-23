@@ -192,7 +192,7 @@ module "vscode-web" {
   folder                  = "/home/coder/minecraft-project-coder_template"
   accept_license          = true
   auto_install_extensions = true
-  extensions              = ["ms-ceintl.vscode-language-pack-ja"]
+  extensions              = ["ms-ceintl.vscode-language-pack-ja", "coder.coder-remote"]
 }
 
 resource "docker_volume" "home_volume" {
