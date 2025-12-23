@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+RUN curl -L https://coder.com/install.sh | sh
 # Minecraft server port
 EXPOSE 25566
 

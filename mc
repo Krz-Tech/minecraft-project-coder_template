@@ -5,12 +5,13 @@
 # 使用方法: ./mc <command>
 #
 # コマンド:
-#   setup   - サーバーセットアップ (Paper + Skript)
-#   start   - サーバー起動
-#   stop    - サーバー停止
+#   setup   - サーバーセットアップ + Coder ログイン
+#   start   - サーバー + ポートフォワード起動
+#   stop    - 全停止
 #   restart - 再起動
-#   status  - 状態表示
-#   logs    - ログ表示
+#   status  - 状態確認
+#   logs    - サーバーログ
+#   attach  - screen セッションに接続
 # =============================================================================
 
 set -euo pipefail
@@ -18,12 +19,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SERVER_DIR="${PROJECT_ROOT}/minecraft-server"
-PID_FILE="${SERVER_DIR}/server.pid"
 JAR_FILE="${SERVER_DIR}/paper.jar"
 
+# Screen セッション名
+SCREEN_SERVER="mc-server"
+SCREEN_TUNNEL="mc-tunnel"
+
+# 設定
 MC_VERSION="1.21.4"
 SERVER_PORT=25566
+LOCAL_PORT=25565
 MEMORY="2G"
+CODER_URL="https://coder.krz-tech.net"
 
 # カラー
 RED='\033[0;31m'
@@ -39,6 +46,17 @@ log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+# Coder CLI パス取得
+get_coder_cli() {
+    # Coder エージェントが配置する CLI を探す
+    local coder_bin
+    coder_bin=$(find /tmp -name "coder" -type f -executable 2>/dev/null | head -1)
+    if [[ -z "$coder_bin" ]]; then
+        coder_bin=$(command -v coder 2>/dev/null || true)
+    fi
+    echo "$coder_bin"
+}
+
 # -----------------------------------------------------------------------------
 # セットアップ
 # -----------------------------------------------------------------------------
@@ -48,9 +66,20 @@ cmd_setup() {
     echo ""
     
     # 依存チェック
-    for cmd in java curl jq; do
+    for cmd in java curl jq screen; do
         command -v "$cmd" &>/dev/null || log_error "$cmd が必要です"
     done
+    
+    # Coder CLI ログイン
+    local coder_bin
+    coder_bin=$(get_coder_cli)
+    if [[ -n "$coder_bin" ]]; then
+        log_info "Coder CLI ログイン中..."
+        "$coder_bin" login "$CODER_URL" || log_warn "Coder ログインをスキップ (既にログイン済みの可能性)"
+        log_success "Coder CLI 準備完了"
+    else
+        log_warn "Coder CLI が見つかりません。ポートフォワードは手動で実行してください。"
+    fi
     
     mkdir -p "${SERVER_DIR}"/{plugins/Skript/scripts,logs}
     
@@ -63,6 +92,8 @@ cmd_setup() {
             | jq -r '.builds | map(select(.channel == "default")) | last | .build')
         curl -sL -o "$JAR_FILE" "${api}/projects/paper/versions/${MC_VERSION}/builds/${build}/downloads/paper-${MC_VERSION}-${build}.jar"
         log_success "Paper ${MC_VERSION}-${build}"
+    else
+        log_info "Paper は既に存在します"
     fi
     
     # Skript ダウンロード
@@ -72,6 +103,8 @@ cmd_setup() {
         url=$(curl -s "https://api.github.com/repos/SkriptLang/Skript/releases/latest" | jq -r '.assets[0].browser_download_url')
         curl -sL -o "${SERVER_DIR}/plugins/$(basename "$url")" "$url"
         log_success "Skript"
+    else
+        log_info "Skript は既に存在します"
     fi
     
     # 設定ファイル
@@ -84,6 +117,7 @@ online-mode=false
 motd=\u00a7b[DEV] \u00a7fMinecraft Development Server
 max-players=10
 EOF
+        log_success "server.properties 作成"
     fi
     
     echo ""
@@ -103,48 +137,58 @@ cmd_start() {
     
     [[ ! -f "$JAR_FILE" ]] && log_error "先に ./mc setup を実行してください"
     
-    # 既存プロセス確認
-    if [[ -f "$PID_FILE" ]]; then
-        local pid
-        pid=$(cat "$PID_FILE")
-        if kill -0 "$pid" 2>/dev/null; then
-            log_warn "既に起動中 (PID: $pid)"
-            echo -e "停止: ${CYAN}./mc stop${NC}"
-            exit 0
-        fi
-        rm -f "$PID_FILE"
+    # 既存セッション確認
+    if screen -ls | grep -q "$SCREEN_SERVER"; then
+        log_warn "サーバーは既に起動中です"
+        echo -e "状態確認: ${CYAN}./mc status${NC}"
+        echo -e "停止:     ${CYAN}./mc stop${NC}"
+        exit 0
     fi
     
-    log_info "サーバー起動中..."
-    cd "$SERVER_DIR"
-    
+    # Minecraft サーバー起動 (screen)
+    log_info "Minecraft サーバーを起動中..."
     local flags="-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200"
-    nohup java -Xms${MEMORY} -Xmx${MEMORY} ${flags} -jar paper.jar --nogui > logs/latest.log 2>&1 &
-    echo "$!" > "$PID_FILE"
-    
+    screen -dmS "$SCREEN_SERVER" bash -c "cd ${SERVER_DIR} && java -Xms${MEMORY} -Xmx${MEMORY} ${flags} -jar paper.jar --nogui 2>&1 | tee logs/latest.log"
     sleep 2
-    if kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        log_success "起動成功 (PID: $(cat "$PID_FILE"))"
+    
+    if screen -ls | grep -q "$SCREEN_SERVER"; then
+        log_success "サーバー起動成功 (screen: $SCREEN_SERVER)"
     else
-        log_error "起動失敗"
+        log_error "サーバー起動失敗"
     fi
     
-    # 接続方法表示
+    # Coder ポートフォワード起動 (screen)
+    local coder_bin
+    coder_bin=$(get_coder_cli)
+    if [[ -n "$coder_bin" ]]; then
+        log_info "ポートフォワードを起動中..."
+        local workspace_name
+        workspace_name=$(hostname)
+        screen -dmS "$SCREEN_TUNNEL" bash -c "${coder_bin} port-forward ${workspace_name} --tcp ${LOCAL_PORT}:${SERVER_PORT} 2>&1"
+        sleep 2
+        
+        if screen -ls | grep -q "$SCREEN_TUNNEL"; then
+            log_success "ポートフォワード起動成功 (screen: $SCREEN_TUNNEL)"
+        else
+            log_warn "ポートフォワード起動失敗"
+        fi
+    else
+        log_warn "Coder CLI が見つかりません。手動でポートフォワードしてください。"
+    fi
+    
+    # 接続情報表示
     echo ""
     echo -e "${BOLD}${CYAN}=========================================="
-    echo "  接続方法"
+    echo "  ✅ Minecraft サーバー起動完了"
     echo -e "==========================================${NC}"
     echo ""
-    echo "  ローカルマシンで以下を実行:"
+    echo -e "  接続先: ${GREEN}${BOLD}localhost:${LOCAL_PORT}${NC}"
     echo ""
-    echo -e "  ${GREEN}coder port-forward \$(hostname) --tcp 25565:${SERVER_PORT}${NC}"
-    echo ""
-    echo "  その後 Minecraft で localhost:25565 に接続"
+    echo -e "  screen 接続:"
+    echo -e "    サーバー:  ${CYAN}screen -r ${SCREEN_SERVER}${NC}"
+    echo -e "    トンネル:  ${CYAN}screen -r ${SCREEN_TUNNEL}${NC}"
     echo ""
     echo -e "${CYAN}==========================================${NC}"
-    echo ""
-    echo -e "ログ: ${CYAN}./mc logs${NC}"
-    echo -e "停止: ${CYAN}./mc stop${NC}"
     echo ""
 }
 
@@ -156,26 +200,28 @@ cmd_stop() {
     echo -e "${BOLD}=== Minecraft Server Stop ===${NC}"
     echo ""
     
-    if [[ ! -f "$PID_FILE" ]]; then
+    # トンネル停止
+    if screen -ls | grep -q "$SCREEN_TUNNEL"; then
+        log_info "ポートフォワードを停止中..."
+        screen -S "$SCREEN_TUNNEL" -X quit 2>/dev/null || true
+        log_success "ポートフォワード停止"
+    fi
+    
+    # サーバー停止
+    if screen -ls | grep -q "$SCREEN_SERVER"; then
+        log_info "サーバーを停止中..."
+        # stop コマンドを送信
+        screen -S "$SCREEN_SERVER" -p 0 -X stuff "stop$(printf '\r')"
+        sleep 5
+        # まだ動いていれば強制終了
+        if screen -ls | grep -q "$SCREEN_SERVER"; then
+            screen -S "$SCREEN_SERVER" -X quit 2>/dev/null || true
+        fi
+        log_success "サーバー停止"
+    else
         log_warn "サーバーは起動していません"
-        return
     fi
     
-    local pid
-    pid=$(cat "$PID_FILE")
-    
-    if kill -0 "$pid" 2>/dev/null; then
-        log_info "停止中 (PID: $pid)..."
-        kill -15 "$pid"
-        for i in {1..15}; do
-            kill -0 "$pid" 2>/dev/null || break
-            sleep 1
-        done
-        kill -9 "$pid" 2>/dev/null || true
-    fi
-    
-    rm -f "$PID_FILE"
-    log_success "停止完了"
     echo ""
 }
 
@@ -187,14 +233,26 @@ cmd_status() {
     echo -e "${BOLD}=== Minecraft Server Status ===${NC}"
     echo ""
     
-    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        echo -e "  Server: ${GREEN}● Running${NC} (PID: $(cat "$PID_FILE"))"
-        echo -e "  Port:   ${SERVER_PORT}"
-        echo ""
-        echo -e "  接続: ${CYAN}coder port-forward \$(hostname) --tcp 25565:${SERVER_PORT}${NC}"
+    # サーバー
+    if screen -ls | grep -q "$SCREEN_SERVER"; then
+        echo -e "  Server:  ${GREEN}● Running${NC} (screen: $SCREEN_SERVER)"
     else
-        echo -e "  Server: ${YELLOW}○ Stopped${NC}"
+        echo -e "  Server:  ${YELLOW}○ Stopped${NC}"
     fi
+    
+    # トンネル
+    if screen -ls | grep -q "$SCREEN_TUNNEL"; then
+        echo -e "  Tunnel:  ${GREEN}● Running${NC} (screen: $SCREEN_TUNNEL)"
+        echo -e "  接続先:  ${GREEN}localhost:${LOCAL_PORT}${NC}"
+    else
+        echo -e "  Tunnel:  ${YELLOW}○ Stopped${NC}"
+    fi
+    
+    echo ""
+    echo -e "  操作:"
+    echo -e "    起動: ${CYAN}./mc start${NC}"
+    echo -e "    停止: ${CYAN}./mc stop${NC}"
+    echo -e "    接続: ${CYAN}screen -r ${SCREEN_SERVER}${NC}"
     echo ""
 }
 
@@ -203,7 +261,23 @@ cmd_status() {
 # -----------------------------------------------------------------------------
 cmd_logs() {
     local log="${SERVER_DIR}/logs/latest.log"
-    [[ -f "$log" ]] && tail -f "$log" || log_error "ログなし"
+    if [[ -f "$log" ]]; then
+        tail -f "$log"
+    else
+        log_error "ログが見つかりません"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Screen 接続
+# -----------------------------------------------------------------------------
+cmd_attach() {
+    local target="${1:-server}"
+    case "$target" in
+        server|s) screen -r "$SCREEN_SERVER" ;;
+        tunnel|t) screen -r "$SCREEN_TUNNEL" ;;
+        *) echo "使用方法: ./mc attach [server|tunnel]" ;;
+    esac
 }
 
 # -----------------------------------------------------------------------------
@@ -215,12 +289,13 @@ show_help() {
     echo ""
     echo "使用方法: ./mc <command>"
     echo ""
-    echo "  setup   セットアップ"
-    echo "  start   起動"
-    echo "  stop    停止"
-    echo "  restart 再起動"
-    echo "  status  状態"
-    echo "  logs    ログ"
+    echo "  setup        セットアップ + Coder ログイン"
+    echo "  start        サーバー + トンネル起動"
+    echo "  stop         全停止"
+    echo "  restart      再起動"
+    echo "  status       状態確認"
+    echo "  logs         サーバーログ"
+    echo "  attach [s|t] screen 接続 (server/tunnel)"
     echo ""
 }
 
@@ -234,5 +309,6 @@ case "${1:-}" in
     restart) cmd_stop; sleep 1; cmd_start ;;
     status)  cmd_status ;;
     logs)    cmd_logs ;;
+    attach)  cmd_attach "${2:-}" ;;
     *)       show_help ;;
 esac
