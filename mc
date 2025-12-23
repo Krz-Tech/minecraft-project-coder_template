@@ -130,18 +130,22 @@ cmd_start() {
     
     # Minecraft サーバー起動 (screen)
     log_info "Minecraft サーバーを起動中..."
+    mkdir -p "${SERVER_DIR}/logs"
     local flags="-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200"
-    screen -dmS "$SCREEN_SERVER" bash -c "cd ${SERVER_DIR} && exec java -Xms${MEMORY} -Xmx${MEMORY} ${flags} -jar paper.jar --nogui"
+    # screen -L でログを有効化、bash -i でインタラクティブモード
+    screen -L -Logfile "${SERVER_DIR}/logs/screen-server.log" -dmS "$SCREEN_SERVER" bash -c "cd ${SERVER_DIR} && java -Xms${MEMORY} -Xmx${MEMORY} ${flags} -jar paper.jar --nogui; echo 'サーバー終了。Enterで閉じる'; read"
     sleep 3
     
     if screen -ls 2>/dev/null | grep -q "\.$SCREEN_SERVER"; then
         log_success "サーバー起動成功 (screen: $SCREEN_SERVER)"
     else
-        log_warn "サーバー起動失敗。ログを確認してください。"
+        log_warn "サーバー起動失敗"
         echo ""
-        echo "screen セッション一覧:"
-        screen -ls
-        echo ""
+        echo "ログ確認: cat ${SERVER_DIR}/logs/screen-server.log"
+        if [[ -f "${SERVER_DIR}/logs/screen-server.log" ]]; then
+            echo "--- 最新ログ ---"
+            tail -20 "${SERVER_DIR}/logs/screen-server.log"
+        fi
         exit 1
     fi
     
@@ -149,7 +153,7 @@ cmd_start() {
     log_info "ポートフォワードを起動中..."
     local workspace_name
     workspace_name=$(hostname)
-    screen -dmS "$SCREEN_TUNNEL" bash -c "exec coder port-forward ${workspace_name} --tcp ${LOCAL_PORT}:${SERVER_PORT}"
+    screen -L -Logfile "${SERVER_DIR}/logs/screen-tunnel.log" -dmS "$SCREEN_TUNNEL" bash -c "coder port-forward ${workspace_name} --tcp ${LOCAL_PORT}:${SERVER_PORT}; echo 'トンネル終了。Enterで閉じる'; read"
     sleep 3
     
     if screen -ls 2>/dev/null | grep -q "\.$SCREEN_TUNNEL"; then
