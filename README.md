@@ -8,34 +8,30 @@ Krz-Tech Minecraft Server Project の Coder 開発環境テンプレートです
 
 Coder ダッシュボードから `mc-develop-container` テンプレートでワークスペースを作成します。
 
-### 2. Minecraft サーバーのセットアップ
+### 2. Minecraft サーバーの管理
 
-ワークスペースが起動したら、VSCode-Web または Antigravity のターミナルで以下を実行：
+統合スクリプト `mc` を使用：
 
 ```bash
 cd ~/minecraft-project-coder_template
 
-# Paper サーバーと Skript プラグインをダウンロード
-./scripts/setup-minecraft-server.sh
-```
+# セットアップ (Paper + Skript ダウンロード)
+./scripts/mc setup
 
-### 3. サーバー起動
+# サーバー起動
+./scripts/mc start
 
-```bash
-# バックグラウンドで起動
-./scripts/start-minecraft-server.sh
+# 外部公開付きで起動 (playit.gg)
+./scripts/mc start --tunnel
 
-# フォアグラウンドで起動 (ログをリアルタイム表示)
-./scripts/start-minecraft-server.sh --foreground
+# サーバー停止
+./scripts/mc stop
 
-# メモリを指定して起動
-./scripts/start-minecraft-server.sh --memory 4G
-```
+# 状態確認 (接続URL表示)
+./scripts/mc status
 
-### 4. サーバー停止
-
-```bash
-./scripts/stop-minecraft-server.sh
+# ログ表示
+./scripts/mc logs
 ```
 
 ---
@@ -83,7 +79,21 @@ minecraft-project-coder_template/
 
 ---
 
-## 🛠️ 利用可能なスクリプト
+## 🛠️ 利用可能なコマンド
+
+### 統合スクリプト (./scripts/mc)
+
+| コマンド | 説明 |
+|-----------|------|
+| `mc setup` | Paper JAR と Skript をダウンロード |
+| `mc start` | サーバー起動 |
+| `mc start --tunnel` | 外部公開付きで起動 |
+| `mc stop` | サーバー停止 |
+| `mc restart` | サーバー再起動 |
+| `mc status` | サーバー状態・接続URL表示 |
+| `mc logs` | ログ表示 (tail -f) |
+
+### 個別スクリプト
 
 | スクリプト | 説明 |
 |-----------|------|
