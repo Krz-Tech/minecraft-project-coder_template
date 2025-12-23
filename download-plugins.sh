@@ -62,7 +62,7 @@ download_github_release() {
 }
 
 # -----------------------------------------------------------------------------
-# Modrinth からダウンロード
+# Modrinth からダウンロード (タイムアウト付き)
 # -----------------------------------------------------------------------------
 download_modrinth() {
     local project="$1"
@@ -71,12 +71,24 @@ download_modrinth() {
     
     log_info "${name} をダウンロード中... (Modrinth: ${project})"
     
-    # 最新バージョンを取得
+    # 既存ファイルをチェック
+    if ls "${OUTPUT_DIR}"/${name}*.jar 2>/dev/null | head -1 > /dev/null; then
+        log_warn "${name}: 既存ファイルあり"
+        return 0
+    fi
+    
+    # 最新バージョンを取得 (10秒タイムアウト)
     local version_data
-    version_data=$(curl -sL "https://api.modrinth.com/v2/project/${project}/version?loaders=[\"${loader}\"]&limit=1")
+    version_data=$(curl -sL --connect-timeout 10 --max-time 15 \
+        "https://api.modrinth.com/v2/project/${project}/version?loaders=[\"${loader}\"]&limit=1" 2>/dev/null || echo "")
+    
+    if [[ -z "$version_data" || "$version_data" == "[]" ]]; then
+        log_warn "${name}: Modrinth APIからの応答なし"
+        return 1
+    fi
     
     local url
-    url=$(echo "$version_data" | jq -r '.[0].files[0].url // empty')
+    url=$(echo "$version_data" | jq -r '.[0].files[0].url // empty' 2>/dev/null || echo "")
     
     if [[ -z "$url" ]]; then
         log_warn "${name}: ダウンロードURLが見つかりません"
@@ -84,17 +96,16 @@ download_modrinth() {
     fi
     
     local filename
-    filename=$(echo "$version_data" | jq -r '.[0].files[0].filename')
+    filename=$(echo "$version_data" | jq -r '.[0].files[0].filename // empty')
     
-    # 既存ファイルをチェック
-    if ls "${OUTPUT_DIR}"/${name}*.jar 2>/dev/null | head -1 > /dev/null; then
-        log_warn "${name}: 既存ファイルあり"
-        return 0
+    if [[ -z "$filename" ]]; then
+        filename="${name}.jar"
     fi
     
-    curl -sL -o "${OUTPUT_DIR}/${filename}" "$url"
+    curl -sL --connect-timeout 10 --max-time 60 -o "${OUTPUT_DIR}/${filename}" "$url"
     log_success "${name} -> ${filename}"
 }
+
 
 # -----------------------------------------------------------------------------
 # Jenkins からダウンロード (LuckPerms)
@@ -192,13 +203,14 @@ main() {
     # Skript
     download_github_release "SkriptLang/Skript" "Skript" ".jar"
     
-    # SkBee (Modrinth)
-    download_modrinth "skbee" "SkBee" "paper"
+    # SkBee (Modrinth -> GitHub fallback)
+    download_modrinth "skbee" "SkBee" "paper" || \
+        download_github_release "ShaneBeee/SkBee" "SkBee" ".jar"
     
     # skript-reflect
     download_github_release "SkriptLang/skript-reflect" "skript-reflect" ".jar"
     
-    # SkQuery (Modrinth)
+    # SkQuery (Modrinth -> GitHub fallback)
     download_modrinth "skquery" "SkQuery" "paper" || \
         download_github_release "SkQuery/SkQuery" "SkQuery" ".jar"
     
@@ -217,8 +229,9 @@ main() {
     # DiscordSRV
     download_github_release "DiscordSRV/DiscordSRV" "DiscordSRV" ".jar"
     
-    # BlueMap (Modrinth)
-    download_modrinth "bluemap" "BlueMap" "paper"
+    # BlueMap (Modrinth -> GitHub fallback)
+    download_modrinth "bluemap" "BlueMap" "paper" || \
+        download_github_release "BlueMap-Minecraft/BlueMap" "BlueMap" ".jar"
     
     echo ""
     echo -e "${BOLD}${GREEN}=== ダウンロード完了 ===${NC}"
