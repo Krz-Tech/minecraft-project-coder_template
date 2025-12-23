@@ -188,23 +188,31 @@ cmd_stop() {
     echo -e "${BOLD}=== Minecraft Server Stop ===${NC}"
     echo ""
     
-    # トンネル停止
-    if screen -ls | grep -q "$SCREEN_TUNNEL"; then
+    # 全ての mc-tunnel セッションを停止
+    local tunnel_sessions
+    tunnel_sessions=$(screen -ls 2>/dev/null | grep "$SCREEN_TUNNEL" | awk '{print $1}' || true)
+    if [[ -n "$tunnel_sessions" ]]; then
         log_info "ポートフォワードを停止中..."
-        screen -S "$SCREEN_TUNNEL" -X quit 2>/dev/null || true
+        for session in $tunnel_sessions; do
+            screen -S "$session" -X quit 2>/dev/null || true
+        done
         log_success "ポートフォワード停止"
     fi
     
-    # サーバー停止
-    if screen -ls | grep -q "$SCREEN_SERVER"; then
+    # 全ての mc-server セッションを停止
+    local server_sessions
+    server_sessions=$(screen -ls 2>/dev/null | grep "$SCREEN_SERVER" | awk '{print $1}' || true)
+    if [[ -n "$server_sessions" ]]; then
         log_info "サーバーを停止中..."
-        # stop コマンドを送信
-        screen -S "$SCREEN_SERVER" -p 0 -X stuff "stop$(printf '\r')"
+        for session in $server_sessions; do
+            # stop コマンドを送信
+            screen -S "$session" -p 0 -X stuff "stop$(printf '\r')" 2>/dev/null || true
+        done
         sleep 5
         # まだ動いていれば強制終了
-        if screen -ls | grep -q "$SCREEN_SERVER"; then
-            screen -S "$SCREEN_SERVER" -X quit 2>/dev/null || true
-        fi
+        for session in $server_sessions; do
+            screen -S "$session" -X quit 2>/dev/null || true
+        done
         log_success "サーバー停止"
     else
         log_warn "サーバーは起動していません"
