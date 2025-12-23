@@ -1,0 +1,3 @@
+[submodule "minecraft-project"]
+	path = minecraft-project
+	url = https://github.com/Krz-Tech/minecraft-project
