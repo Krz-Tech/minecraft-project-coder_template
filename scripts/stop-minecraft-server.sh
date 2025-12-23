@@ -107,6 +107,14 @@ load_rcon_settings() {
 # Cloudflare Tunnel 停止 / Stop Cloudflare Tunnel
 # -----------------------------------------------------------------------------
 stop_tunnel() {
+    # screen セッションで起動した場合
+    if screen -ls | grep -q playit-tunnel; then
+        log_tunnel "playit.gg Tunnel (screen) を停止中..."
+        screen -S playit-tunnel -X quit 2>/dev/null || true
+        log_tunnel "playit.gg Tunnel 停止完了"
+    fi
+    
+    # PID ファイルで起動した場合
     if [[ -f "$TUNNEL_PID_FILE" ]]; then
         local tunnel_pid
         tunnel_pid=$(cat "$TUNNEL_PID_FILE")
@@ -117,8 +125,6 @@ stop_tunnel() {
             sleep 2
             kill -9 "$tunnel_pid" 2>/dev/null || true
             log_tunnel "playit.gg Tunnel 停止完了"
-        else
-            log_tunnel "Tunnel プロセスは既に停止しています"
         fi
         
         rm -f "$TUNNEL_PID_FILE"

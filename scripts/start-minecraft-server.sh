@@ -23,6 +23,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SERVER_DIR="${PROJECT_ROOT}/minecraft-server"
 PID_FILE="${SERVER_DIR}/server.pid"
 TUNNEL_PID_FILE="${SERVER_DIR}/tunnel.pid"
+TUNNEL_URL_FILE="${SERVER_DIR}/tunnel_url.txt"
 JAR_FILE="${SERVER_DIR}/paper.jar"
 CONF_FILE="${SERVER_DIR}/start.conf"
 
@@ -48,6 +49,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+BOLD='\033[1m'
 
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -171,6 +173,41 @@ check_prerequisites() {
 }
 
 # -----------------------------------------------------------------------------
+# playit.gg から接続URL取得 / Get tunnel URL from playit.gg
+# -----------------------------------------------------------------------------
+get_tunnel_url() {
+    local tunnel_log="$1"
+    local max_wait=30
+    local url=""
+    
+    log_tunnel "接続 URL を取得中..."
+    
+    for ((i=1; i<=max_wait; i++)); do
+        # playit ログから URL を抽出 (複数パターンに対応)
+        if [[ -f "$tunnel_log" ]]; then
+            # パターン1: xxx.at.playit.gg
+            url=$(grep -oE '[a-zA-Z0-9-]+\.at\.playit\.gg(:[0-9]+)?' "$tunnel_log" 2>/dev/null | head -1 || true)
+            
+            # パターン2: playit.gg のその他のドメイン
+            if [[ -z "$url" ]]; then
+                url=$(grep -oE '[a-zA-Z0-9-]+\.(playit\.gg|joinmc\.link)(:[0-9]+)?' "$tunnel_log" 2>/dev/null | head -1 || true)
+            fi
+        fi
+        
+        if [[ -n "$url" ]]; then
+            echo "$url" > "$TUNNEL_URL_FILE"
+            return 0
+        fi
+        
+        printf "\r${CYAN}[TUNNEL]${NC} 待機中... %d/%d 秒" "$i" "$max_wait"
+        sleep 1
+    done
+    
+    echo ""
+    return 1
+}
+
+# -----------------------------------------------------------------------------
 # playit.gg Tunnel 起動 / Start playit.gg Tunnel
 # -----------------------------------------------------------------------------
 start_tunnel() {
@@ -179,36 +216,61 @@ start_tunnel() {
     
     local tunnel_log="${SERVER_DIR}/logs/tunnel.log"
     
-    echo ""
-    echo -e "${CYAN}=========================================="
-    echo "  playit.gg TCP Tunnel"
-    echo "=========================================="
-    echo ""
-    echo "  playit.gg を初めて使用する場合:"
-    echo "  1. 以下のコマンドを別ターミナルで実行:"
-    echo ""
-    echo "     playit"
-    echo ""
-    echo "  2. 表示されるリンクをブラウザで開き"
-    echo "     playit.gg アカウントにログイン"
-    echo ""
-    echo "  3. ダッシュボードでトンネルを設定:"
-    echo "     - Add Tunnel → Minecraft Java"
-    echo "     - Local port: ${SERVER_PORT}"
-    echo ""
-    echo "  4. 発行されたアドレスで接続可能になります"
-    echo "     例: xxx.at.playit.gg"
-    echo ""
-    echo -e "==========================================${NC}"
-    echo ""
+    # 古いログをクリア
+    rm -f "$tunnel_log" "$TUNNEL_URL_FILE"
     
-    # バックグラウンドで playit を起動
-    nohup playit > "$tunnel_log" 2>&1 &
-    local tunnel_pid=$!
-    echo "$tunnel_pid" > "$TUNNEL_PID_FILE"
+    # playit を起動
+    if command -v screen &> /dev/null; then
+        screen -dmS playit-tunnel bash -c "playit 2>&1 | tee ${tunnel_log}"
+        sleep 2
+        local tunnel_pid
+        tunnel_pid=$(screen -ls | grep playit-tunnel | awk '{print $1}' | cut -d'.' -f1)
+        if [[ -n "$tunnel_pid" ]]; then
+            echo "$tunnel_pid" > "$TUNNEL_PID_FILE"
+        fi
+    else
+        nohup playit > "$tunnel_log" 2>&1 &
+        local tunnel_pid=$!
+        echo "$tunnel_pid" > "$TUNNEL_PID_FILE"
+    fi
     
-    log_tunnel "playit プロセスを起動しました (PID: $tunnel_pid)"
-    log_tunnel "ログ: tail -f ${tunnel_log}"
+    # URL 取得を試行
+    if get_tunnel_url "$tunnel_log"; then
+        local url
+        url=$(cat "$TUNNEL_URL_FILE")
+        echo ""
+        echo ""
+        echo -e "${BOLD}${CYAN}=========================================="
+        echo "  ✅ Minecraft サーバー接続情報"
+        echo -e "==========================================${NC}"
+        echo ""
+        echo -e "  ${BOLD}接続先アドレス:${NC}"
+        echo -e "  ${GREEN}${BOLD}${url}${NC}"
+        echo ""
+        echo "  Minecraft クライアントから上記アドレスで接続できます"
+        echo ""
+        echo -e "${CYAN}==========================================${NC}"
+        echo ""
+    else
+        echo ""
+        echo -e "${YELLOW}=========================================="
+        echo "  ⚠️ 接続URLの自動取得に失敗しました"
+        echo -e "==========================================${NC}"
+        echo ""
+        echo "  初回セットアップが必要な場合:"
+        echo "  1. playit.gg ダッシュボードでトンネルを追加"
+        echo "     https://playit.gg/account/tunnels"
+        echo "  2. Add Tunnel → Minecraft Java"
+        echo "  3. Local port: ${SERVER_PORT}"
+        echo ""
+        echo "  ログ確認: tail -f ${tunnel_log}"
+        echo ""
+    fi
+    
+    log_tunnel "Tunnel ログ: tail -f ${tunnel_log}"
+    if command -v screen &> /dev/null; then
+        log_tunnel "Tunnel 接続: screen -r playit-tunnel"
+    fi
     echo ""
 }
 
