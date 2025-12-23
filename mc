@@ -121,7 +121,7 @@ cmd_start() {
     [[ ! -f "$JAR_FILE" ]] && log_error "先に ./mc setup を実行してください"
     
     # 既存セッション確認
-    if screen -ls | grep -q "$SCREEN_SERVER"; then
+    if screen -ls 2>/dev/null | grep -q "\.$SCREEN_SERVER"; then
         log_warn "サーバーは既に起動中です"
         echo -e "状態確認: ${CYAN}./mc status${NC}"
         echo -e "停止:     ${CYAN}./mc stop${NC}"
@@ -131,26 +131,34 @@ cmd_start() {
     # Minecraft サーバー起動 (screen)
     log_info "Minecraft サーバーを起動中..."
     local flags="-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200"
-    screen -dmS "$SCREEN_SERVER" bash -c "cd ${SERVER_DIR} && java -Xms${MEMORY} -Xmx${MEMORY} ${flags} -jar paper.jar --nogui 2>&1 | tee logs/latest.log"
-    sleep 2
+    screen -dmS "$SCREEN_SERVER" bash -c "cd ${SERVER_DIR} && exec java -Xms${MEMORY} -Xmx${MEMORY} ${flags} -jar paper.jar --nogui"
+    sleep 3
     
-    if screen -ls | grep -q "$SCREEN_SERVER"; then
+    if screen -ls 2>/dev/null | grep -q "\.$SCREEN_SERVER"; then
         log_success "サーバー起動成功 (screen: $SCREEN_SERVER)"
     else
-        log_error "サーバー起動失敗"
+        log_warn "サーバー起動失敗。ログを確認してください。"
+        echo ""
+        echo "screen セッション一覧:"
+        screen -ls
+        echo ""
+        exit 1
     fi
     
     # Coder ポートフォワード起動 (screen)
     log_info "ポートフォワードを起動中..."
     local workspace_name
     workspace_name=$(hostname)
-    screen -dmS "$SCREEN_TUNNEL" bash -c "coder port-forward ${workspace_name} --tcp ${LOCAL_PORT}:${SERVER_PORT} 2>&1"
-    sleep 2
+    screen -dmS "$SCREEN_TUNNEL" bash -c "exec coder port-forward ${workspace_name} --tcp ${LOCAL_PORT}:${SERVER_PORT}"
+    sleep 3
     
-    if screen -ls | grep -q "$SCREEN_TUNNEL"; then
+    if screen -ls 2>/dev/null | grep -q "\.$SCREEN_TUNNEL"; then
         log_success "ポートフォワード起動成功 (screen: $SCREEN_TUNNEL)"
     else
         log_warn "ポートフォワード起動失敗"
+        echo ""
+        echo "screen セッション一覧:"
+        screen -ls
     fi
     
     # 接続情報表示
