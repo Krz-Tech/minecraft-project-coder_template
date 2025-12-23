@@ -26,6 +26,39 @@ log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# 既知の安定バージョンURL (Modrinth CDN)
+SKBEE_URL="https://cdn.modrinth.com/data/7pKdGWbp/versions/OgqPDXpl/SkBee-3.12.2.jar"
+SKBEE_FILE="SkBee-3.12.2.jar"
+SKQUERY_URL="https://cdn.modrinth.com/data/veHXwa70/versions/9iQWgqbA/SkQuery-4.1.10.jar"
+SKQUERY_FILE="SkQuery-4.1.10.jar"
+BLUEMAP_URL="https://cdn.modrinth.com/data/swbUV1cr/versions/lmFFq0P4/BlueMap-5.5-paper.jar"
+BLUEMAP_FILE="BlueMap-5.5-paper.jar"
+
+# -----------------------------------------------------------------------------
+# 直接URLからダウンロード (フォールバック用)
+# -----------------------------------------------------------------------------
+download_direct() {
+    local url="$1"
+    local filename="$2"
+    local name="$3"
+    
+    log_info "${name} を直接ダウンロード中..."
+    
+    # 既存ファイルをチェック
+    if ls "${OUTPUT_DIR}"/${name}*.jar 2>/dev/null | head -1 > /dev/null; then
+        log_warn "${name}: 既存ファイルあり"
+        return 0
+    fi
+    
+    if curl -sL --connect-timeout 15 --max-time 120 -o "${OUTPUT_DIR}/${filename}" "$url"; then
+        log_success "${name} -> ${filename}"
+        return 0
+    else
+        log_warn "${name}: ダウンロード失敗"
+        return 1
+    fi
+}
+
 # -----------------------------------------------------------------------------
 # GitHub Latest Release からダウンロード
 # -----------------------------------------------------------------------------
@@ -203,16 +236,16 @@ main() {
     # Skript
     download_github_release "SkriptLang/Skript" "Skript" ".jar"
     
-    # SkBee (Modrinth -> GitHub fallback)
+    # SkBee (Modrinth API -> 直接URL fallback)
     download_modrinth "skbee" "SkBee" "paper" || \
-        download_github_release "ShaneBeee/SkBee" "SkBee" ".jar"
+        download_direct "$SKBEE_URL" "$SKBEE_FILE" "SkBee"
     
     # skript-reflect
     download_github_release "SkriptLang/skript-reflect" "skript-reflect" ".jar"
     
-    # SkQuery (Modrinth -> GitHub fallback)
+    # SkQuery (Modrinth API -> 直接URL fallback)
     download_modrinth "skquery" "SkQuery" "paper" || \
-        download_github_release "SkQuery/SkQuery" "SkQuery" ".jar"
+        download_direct "$SKQUERY_URL" "$SKQUERY_FILE" "SkQuery"
     
     # Vault
     download_vault
@@ -229,9 +262,9 @@ main() {
     # DiscordSRV
     download_github_release "DiscordSRV/DiscordSRV" "DiscordSRV" ".jar"
     
-    # BlueMap (Modrinth -> GitHub fallback)
+    # BlueMap (Modrinth API -> 直接URL fallback)
     download_modrinth "bluemap" "BlueMap" "paper" || \
-        download_github_release "BlueMap-Minecraft/BlueMap" "BlueMap" ".jar"
+        download_direct "$BLUEMAP_URL" "$BLUEMAP_FILE" "BlueMap"
     
     echo ""
     echo -e "${BOLD}${GREEN}=== ダウンロード完了 ===${NC}"
